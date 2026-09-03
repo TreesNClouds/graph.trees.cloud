@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "outDir": "./dist",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "target": "es2020",
+    "lib": ["es2020"],
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["../../monorepo.trees.clouds/apps/api.trees.cloud/src/*"],
+      "@tnc/prisma": ["../../monorepo.trees.clouds/packages/prisma/src/index.api-trees-cloud.ts"],
+      "@tnc/shared": ["../../monorepo.trees.clouds/packages/shared/src"]
+    },
+    "sourceMap": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": false,
+    "noImplicitAny": false,
+    "esModuleInterop": true,
+    "strict": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["dist/**/*", "node_modules/**/*", "web/**/*"]
+}
