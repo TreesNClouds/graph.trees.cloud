@@ -1,38 +1,65 @@
-# v2.trees.cloud
+# graph.trees.cloud
 
-Standalone Trees N Clouds v2 app. Lives next to `monorepo.trees.clouds`, not
-inside it. GraphQL is the API the frontend will use. Same stack: API keys,
-ClickHouse cubes, `api.trees.cloud` public-menu handlers.
+Developer template for the trees.cloud **v2 GraphQL API**. Paste a trees.cloud API key, then use GraphiQL. This site does not log in users and does not open a database.
 
-| Surface | This app | Still on `api.trees.cloud` (`:3333`) |
-|---|---|---|
-| Frontend (`web/`, `:3401`) | Next.js login, workspace, theme | user / account via `/api/v1/auth/*` |
-| `POST /api/v2/graphql` (`:3400`) | Yoga + GraphiQL | original mount (unchanged) |
-| Tenant cubes (ERP / ACC / CRM / POS) | in-process `runCube*` → ClickHouse | same engine |
-| Public menus + dashboard proxies | `API_TREES_CLOUD_URL` | REST JSON handlers |
-| Developer portal API | `/api/v2/portal` | keys/usage/seats/billing tables |
-| Platform tasks | proxy `/api/v2/tasks` → `:3333` | implementation on `api.trees.cloud` |
+The live schema is the cube API on `api.trees.cloud`: `publicMenus`, `enterpriseResourcePlanning`, `accounting`, `customerRelationshipManagement`, `pointOfSale`.
+
+## Get a key
+
+In [app.trees.cloud](https://app.trees.cloud) open the workspace **Settings → API Keys** and generate a key. It looks like `tnc_live_…` or `tnc_test_…` (shown once).
 
 ## Run
 
 ```bash
-# From monorepo.trees.clouds — publicMenus / dashboard handlers + auth
-pnpm --filter api.trees.cloud dev
-
-# GraphQL + portal API
-cd ~/Sites/v2/graph.trees.cloud
+cd graph.trees.cloud
+pnpm --dir web install   # first time
 pnpm dev
-
-# Frontend
-pnpm web
 ```
 
-- App: http://localhost:3401/login
-- GraphQL + GraphiQL: http://localhost:3400/api/v2/graphql
-- Tasks: http://localhost:3333/api/v2/tasks/:subscriptionId — or the `:3400` proxy
-- Health: http://localhost:3400/health
+Open http://localhost:3401 — Connect, paste the key. Home is the cube **catalog** (same object table as `api.trees.cloud/api/v2/cube`). **GraphQL** is the playground.
 
-Google SSO uses the existing Supabase Auth provider. Add this redirect in
-Authentication → URL Configuration:
+The key stays in `sessionStorage` for this tab only. Disconnect or a new tab asks again.
 
-- `http://localhost:3401/api/auth/callback`
+## Upstream
+
+Next rewrites `/api/v2/graphql` to `GRAPH_API_URL` (default `https://api.trees.cloud`). Override in `web/.env.local`:
+
+```bash
+# Production (default)
+GRAPH_API_URL=https://api.trees.cloud
+
+# Local api.trees.cloud
+GRAPH_API_URL=http://127.0.0.1:3333
+```
+
+Restart `pnpm dev` after changing it.
+
+## Example queries
+
+Any valid key (nationwide public menus):
+
+```graphql
+query {
+  publicMenus {
+    meta
+  }
+}
+```
+
+Tenant cube — `subscriptionId` must match the key:
+
+```graphql
+query {
+  enterpriseResourcePlanning(subscriptionId: 23) {
+    meta
+  }
+}
+```
+
+GraphiQL (`/graphql`) sends `Authorization: Bearer <key>` automatically after Connect.
+
+## License
+
+[FSL-1.1-MIT](./LICENSE) — source available now, MIT in two years. Internal use,
+education, research, and self-hosting are permitted. Offering a competing hosted
+substitute is not. The in-app copy is at `/license`.

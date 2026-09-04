@@ -16,6 +16,9 @@ schema, resolvers, and field docs live together. GraphiQL is the live catalog.
 | `dashboards/inventory.ts` | `inventoryReports` | `InventoryReportsCube` |
 | `dashboards/erp-orders.ts` | `erpOrders` | `ErpOrdersCube` |
 | `dashboards/contacts.ts` | `contactsAccounts`, `contactsProspects`, `contactsGroups` | `Contacts*Cube` |
+| `dashboards/licenses.ts` | `licenses` | `LicensesCube` |
+| `dashboards/listings.ts` | `listings` | `ListingsCube` |
+| `dashboards/geo.ts` | `geo` | `GeoCube` |
 
 Kernel (not cubes): `context.ts` (API-key auth), `proxy.ts` (REST passthrough),
 `graphiql.ts` (IDE chrome), `index.ts` (merge + Yoga).

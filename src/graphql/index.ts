@@ -21,6 +21,9 @@ import { tags } from './dashboards/tags';
 import { inventory } from './dashboards/inventory';
 import { erpOrders } from './dashboards/erp-orders';
 import { contacts } from './dashboards/contacts';
+import { licenses } from './dashboards/licenses';
+import { listings } from './dashboards/listings';
+import { geo } from './dashboards/geo';
 import { BRAND_LOGO, DEFAULT_QUERY, renderBrandedGraphiQL } from './graphiql';
 import { mergeResolvers, type CubeModule, type Ctx } from './types';
 
@@ -35,6 +38,9 @@ const cubes: CubeModule[] = [
   inventory,
   erpOrders,
   contacts,
+  licenses,
+  listings,
+  geo,
 ];
 
 const typeDefs = [

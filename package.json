@@ -2,9 +2,11 @@
   "name": "v2.trees.cloud",
   "version": "0.0.0",
   "private": true,
+  "license": "FSL-1.1-MIT",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "web": "pnpm --dir web dev --port 3401",
+    "dev": "pnpm --dir web dev",
+    "web": "pnpm --dir web dev",
+    "api": "echo 'Do not run the local Yoga/portal. GraphQL is proxied to GRAPH_API_URL (api.trees.cloud).' && exit 1",
     "build": "tsc",
     "start": "node dist/index.js",
     "lint": "echo 'no lint yet'",

@@ -8,6 +8,7 @@ export const DEFAULT_QUERY = `# Trees N Clouds — GraphQL Cube API
 #
 # SERVICES (prefer full field names)
 #   publicMenus                      Public Menus — nationwide dispensary menus
+#   licenses                         State-issued cannabis licenses (regulator file)
 #   enterpriseResourcePlanning(id)   Enterprise Resource Planning — wholesale orders
 #   accounting(id)                   Accounting — invoice lines
 #   customerRelationshipManagement(id)  Customer Relationship Management — tasks
@@ -42,7 +43,20 @@ query TopBrandsByRevenueInCalifornia {
   }
 }
 
-# 3) Enterprise Resource Planning — discover shape, then query (change subscriptionId)
+# 3) Licenses — CA active directory
+query CaActiveLicenses {
+  licenses {
+    facets
+    list(state: "CA", status: "active", limit: 25, sort: "license_number", dir: ASC) {
+      total
+      page
+      perPage
+      data
+    }
+  }
+}
+
+# 4) Enterprise Resource Planning — discover shape, then query (change subscriptionId)
 query EnterpriseResourcePlanningShape {
   enterpriseResourcePlanning(subscriptionId: 23) {
     schema
