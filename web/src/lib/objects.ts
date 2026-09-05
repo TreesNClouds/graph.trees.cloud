@@ -50,6 +50,9 @@ export type ObjectSpec = {
   recordsTab?: string;
   /** Applied on first paint and when the object changes. Clearable. */
   defaultValues?: Record<string, string | string[]>;
+  /** `publicMenus { meta }` key shown on the catalog card. */
+  statKey?: string;
+  statLabel?: string;
 };
 
 const PUB_FILTERS: FilterDef[] = [
@@ -135,7 +138,10 @@ export const OBJECTS: ObjectSpec[] = [
   pub("retailer", "Retailer", "Canonical dispensary across every menu source. Menu is this grain.", {
     kind: "explore",
     exploreDim: "retailers",
+    statKey: "stores",
+    statLabel: "stores",
     searchKey: "q",
+    defaultSort: "skus",
     columns: [
       { key: "name", label: "Name", kind: "text", sort: "name" },
       { key: "city", label: "City", kind: "text" },
@@ -165,6 +171,8 @@ export const OBJECTS: ObjectSpec[] = [
   }),
   pub("menu-item", "Menu Item", "One priced line on one store menu — the atomic fact. Offer is this grain.", {
     kind: "records",
+    statKey: "rows",
+    statLabel: "lines",
     searchKey: "q",
     searchPlaceholder: "Retailer, item, or brand…",
     recordsTab: "menu_item",
@@ -186,6 +194,8 @@ export const OBJECTS: ObjectSpec[] = [
   pub("brand", "Brand", "Canonical brand rolled up across stores and spellings.", {
     kind: "explore",
     exploreDim: "brands",
+    statKey: "brands",
+    statLabel: "brands",
     searchKey: "q",
     defaultSort: "revenue",
     filters: PUB_FILTERS.filter((f) => f.key !== "stock" && f.key !== "price" && f.key !== "brand"),
@@ -199,8 +209,11 @@ export const OBJECTS: ObjectSpec[] = [
   pub("product", "Product", "Brand + name-core, collapsed across stores.", {
     kind: "explore",
     exploreDim: "products",
+    statKey: "products",
+    statLabel: "products",
     searchKey: "item",
     defaultValues: { state: ["CA"] },
+    defaultSort: "revenue",
     columns: [
       { key: "name", label: "Product", kind: "text", sort: "name" },
       { key: "brand", label: "Brand", kind: "text" },
@@ -234,7 +247,10 @@ export const OBJECTS: ObjectSpec[] = [
   pub("category", "Category", "Canonical top-level product category.", {
     kind: "explore",
     exploreDim: "categories",
+    statKey: "categories",
+    statLabel: "categories",
     searchKey: "q",
+    defaultSort: "skus",
     columns: [
       { key: "name", label: "Category", kind: "text", sort: "name" },
       { key: "skus", label: "SKUs", kind: "int", sort: "skus" },
@@ -246,7 +262,10 @@ export const OBJECTS: ObjectSpec[] = [
   pub("subcategory", "Subcategory", "Second-tier category inside a parent.", {
     kind: "explore",
     exploreDim: "subcategories",
+    statKey: "subcategories",
+    statLabel: "subcategories",
     searchKey: "q",
+    defaultSort: "skus",
     columns: [
       { key: "name", label: "Subcategory", kind: "text", sort: "name" },
       { key: "skus", label: "SKUs", kind: "int", sort: "skus" },
@@ -257,6 +276,8 @@ export const OBJECTS: ObjectSpec[] = [
   }),
   pub("genetics", "Genetics", "Indica, sativa, or hybrid.", {
     kind: "query",
+    statKey: "genetics",
+    statLabel: "classes",
     groupBy: ["genetics"],
     metrics: ["products", "avg_thc", "avg_price", "stores"],
     columns: [
@@ -270,7 +291,10 @@ export const OBJECTS: ObjectSpec[] = [
   pub("state", "Market (State)", "U.S. state market roll-up.", {
     kind: "explore",
     exploreDim: "states",
+    statKey: "states",
+    statLabel: "states",
     searchKey: "q",
+    defaultSort: "stores",
     columns: [
       { key: "name", label: "State", kind: "text", sort: "name" },
       { key: "stores", label: "Retailers", kind: "int", sort: "stores" },
@@ -286,6 +310,8 @@ export const OBJECTS: ObjectSpec[] = [
     tagline: "Point or ZIP → Census, demographics, and nearby dispensaries.",
     gated: false,
     kind: "geo",
+    statKey: "zips",
+    statLabel: "ZIPs",
     searchKey: "zip",
     filters: [
       { key: "zip", label: "ZIP", type: "search", placeholder: "90210" },
@@ -303,7 +329,10 @@ export const OBJECTS: ObjectSpec[] = [
     tagline: "Directory of cannabis-adjacent storefronts, with or without a menu.",
     gated: false,
     kind: "listings",
+    statKey: "listings",
+    statLabel: "listings",
     searchKey: "q",
+    defaultSort: "products",
     filters: [
       { key: "state", label: "State", type: "multi", facet: "states" },
       {
@@ -340,6 +369,8 @@ export const OBJECTS: ObjectSpec[] = [
     tagline: "State-issued cannabis license — number, type, status, and premise. GraphQL: licenses.",
     gated: false,
     kind: "licenses",
+    statKey: "licenses",
+    statLabel: "licenses",
     searchKey: "q",
     searchPlaceholder: "License #, DBA, or city…",
     defaultSort: "state_code",
@@ -417,6 +448,29 @@ export const OBJECTS: ObjectSpec[] = [
     ],
   },
 ];
+
+/** Catalog section order. TLA is last — it is the spine, not the front door. */
+export const CATALOG_FAMILIES: {
+  id: ObjectSpec["family"];
+  code: string;
+  name: string;
+  tagline: string;
+  color: string;
+}[] = [
+  { id: "pub", code: "PUB", name: "Public Menus", tagline: "Every cannabis menu line-item, canonicalized. GraphQL: publicMenus.", color: "#42AA9C" },
+  { id: "pos", code: "POS", name: "Point of Sale", tagline: "Retail ticket & line-item data. GraphQL: pointOfSale.", color: "#FF5D57" },
+  { id: "erp", code: "ERP", name: "Enterprise Resource Planning", tagline: "Wholesale supply, orders & inventory. GraphQL: enterpriseResourcePlanning.", color: "#27665e" },
+  { id: "crm", code: "CRM", name: "Customer Relationship Management", tagline: "Wholesale relationships & tasks. GraphQL: customerRelationshipManagement.", color: "#4a5a67" },
+  { id: "acc", code: "ACC", name: "Accounting", tagline: "Invoice & line-item financial data. GraphQL: accounting.", color: "#d60700" },
+  { id: "tla", code: "TLA", name: "Top-Level Account", tagline: "Identity spine for CRM, ACC, and ERP — active only when one of those connections is live.", color: "#626A7D" },
+];
+
+/** Aliases of another object — not shown as their own catalog cards. */
+const CATALOG_ALIASES = new Set(["menu", "offer"]);
+
+export function catalogObjects(): ObjectSpec[] {
+  return OBJECTS.filter((o) => !CATALOG_ALIASES.has(o.id));
+}
 
 const BY_ID = new Map(OBJECTS.map((o) => [o.id, o]));
 

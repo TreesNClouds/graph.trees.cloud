@@ -5,7 +5,19 @@ import { ChevronDown, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { BrandRow } from "@/components/brand-cell";
+import { ObjectMap } from "@/components/object-map";
+import { ObjectCards, ObjectThumb, ObjectViewSwitch } from "@/components/object-views";
 import { gql, type CubePage, type TenantSchema } from "@/lib/gql";
+import {
+  filtersToSearchParams,
+  nameColumnKey,
+  parseMapPoints,
+  readObjectView,
+  rowMapPoints,
+  writeObjectView,
+  type MapPoint,
+  type ObjectView,
+} from "@/lib/object-media";
 import { formatCell, type ColumnDef, type FilterDef, type ObjectSpec } from "@/lib/objects";
 import { cn } from "@/lib/utils";
 
@@ -152,12 +164,8 @@ function loadPubFacets(apiKey: string): Promise<Record<string, FacetOpt[]>> {
 
 function loadLicenseFacets(apiKey: string): Promise<Record<string, FacetOpt[]>> {
   if (!licenseFacetsCache) {
-    licenseFacetsCache = gql<{ licenses: { facets: Record<string, unknown> } }>(
-      apiKey,
-      `query { licenses { facets } }`,
-    )
-      .then((data) => {
-        const payload = data.licenses.facets ?? {};
+    licenseFacetsCache = cubeData(apiKey, "/geo/licenses/facets")
+      .then((payload) => {
         const statuses = packFacets(payload, "statuses");
         if (!statuses.some((o) => o.v.toLowerCase() === "active")) {
           statuses.unshift({ v: "active", label: "Active" });
@@ -213,6 +221,16 @@ function loadScopedFacets(apiKey: string, values: Values): Promise<Record<string
   return pending;
 }
 
+async function cubeData(apiKey: string, path: string): Promise<Record<string, unknown>> {
+  const data = await gql<{ publicMenus: { data: unknown } }>(
+    apiKey,
+    `query($p:String!){publicMenus{data(path:$p)}}`,
+    { p: path },
+  );
+  const payload = data.publicMenus.data;
+  return payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
+}
+
 function formatGeoValue(value: unknown): string {
   if (value == null || value === "") return "—";
   if (typeof value === "number") return Number.isFinite(value) ? value.toLocaleString("en-US") : String(value);
@@ -240,6 +258,43 @@ const GEO_SECTIONS: Array<{ key: string; title: string }> = [
   { key: "demand_weight", title: "Demand" },
   { key: "density", title: "Density" },
 ];
+
+function GeoListView({ payload }: { payload: Record<string, unknown> | null }) {
+  if (!payload) return null;
+  const layers = (payload.layers as Record<string, unknown> | undefined) ?? {};
+  const rows = GEO_SECTIONS.flatMap((section) => {
+    const raw = section.key === "resolved" ? payload.resolved : layers[section.key];
+    return flattenGeoBlock(raw).map((row) => ({ ...row, section: section.title }));
+  });
+  if (!rows.length) {
+    return <div className="px-6 py-16 text-center text-sm text-muted-foreground">No enrich layers for this ZIP.</div>;
+  }
+  return (
+    <table className="w-full border-separate border-spacing-0 text-sm">
+      <thead className="sticky top-0 z-10">
+        <tr>
+          {["Layer", "Field", "Value"].map((label) => (
+            <th
+              key={label}
+              className="border-b bg-background/95 px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground backdrop-blur"
+            >
+              {label}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => (
+          <tr key={`${row.section}-${row.label}`} className="hover:bg-accent/40">
+            <td className="border-b border-border/70 px-4 py-2.5 text-muted-foreground">{row.section}</td>
+            <td className="border-b border-border/70 px-4 py-2.5">{row.label}</td>
+            <td className="border-b border-border/70 px-4 py-2.5 text-right tabular-nums">{row.value}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
 
 function GeoEnrichView({ payload }: { payload: Record<string, unknown> | null }) {
   if (!payload) return null;
@@ -290,6 +345,10 @@ export function ObjectExplorer({ spec, apiKey }: { spec: ObjectSpec; apiKey: str
   const [sub, setSub] = useState("");
   const [subDraft, setSubDraft] = useState("");
   const [schema, setSchema] = useState<TenantSchema | null>(null);
+  const [view, setView] = useState<ObjectView>("cards");
+  const [mapPoints, setMapPoints] = useState<MapPoint[]>([]);
+  const [mapLoading, setMapLoading] = useState(false);
+  const [mapError, setMapError] = useState("");
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scopeKey = `${asList(values.state).join(",")}|${asList(values.category).join(",")}`;
 
@@ -334,7 +393,15 @@ export function ObjectExplorer({ spec, apiKey }: { spec: ObjectSpec; apiKey: str
     setRows([]);
     setGeoPayload(null);
     setSchema(null);
+    setView(readObjectView(spec.id));
+    setMapPoints([]);
+    setMapError("");
   }, [spec.id, spec.defaultValues, spec.defaultSort, spec.defaultDir, spec.columns]);
+
+  const changeView = (next: ObjectView) => {
+    setView(next);
+    writeObjectView(spec.id, next);
+  };
 
   const setFilter = useCallback(
     (key: string, next: string | string[]) => {
@@ -361,10 +428,12 @@ export function ObjectExplorer({ spec, apiKey }: { spec: ObjectSpec; apiKey: str
     if (spec.kind === "geo" || spec.kind === "tenant") return;
     try {
       if (spec.kind === "licenses") {
-        setOptions((prev) => ({ ...prev, ...(await loadLicenseFacets(apiKey)) }));
+        const next = await loadLicenseFacets(apiKey);
+        setOptions((prev) => ({ ...prev, ...next }));
         return;
       }
-      setOptions((prev) => ({ ...prev, ...(await loadPubFacets(apiKey)) }));
+      const next = await loadPubFacets(apiKey);
+      setOptions((prev) => ({ ...prev, ...next }));
     } catch {
       /* options are secondary */
     }
@@ -374,7 +443,8 @@ export function ObjectExplorer({ spec, apiKey }: { spec: ObjectSpec; apiKey: str
     if (spec.kind === "geo" || spec.kind === "licenses" || spec.kind === "tenant") return;
     if (!asList(values.state).length && !asList(values.category).length) return;
     try {
-      setOptions((prev) => ({ ...prev, ...(await loadScopedFacets(apiKey, values)) }));
+      const next = await loadScopedFacets(apiKey, values);
+      setOptions((prev) => ({ ...prev, ...next }));
     } catch {
       /* keep unscoped facets */
     }
@@ -437,10 +507,13 @@ export function ObjectExplorer({ spec, apiKey }: { spec: ObjectSpec; apiKey: str
       }
 
       if (spec.kind === "records") {
-        const data = await gql<{ publicMenus: { records: CubePage } }>(
+        const data = await gql<{ publicMenus: { records: CubePage; media: CubePage } }>(
           apiKey,
           `query($f:JSON,$tab:String,$sort:String,$dir:SortDir,$page:Int,$limit:Int){
-            publicMenus{records(filters:$f,tab:$tab,sort:$sort,dir:$dir,page:$page,limit:$limit){snapshotDate total data columns}}
+            publicMenus{
+              records(filters:$f,tab:$tab,sort:$sort,dir:$dir,page:$page,limit:$limit){snapshotDate total data columns}
+              media:records(filters:$f,tab:"media",sort:$sort,dir:$dir,page:$page,limit:$limit){data}
+            }
           }`,
           {
             f: menuFilters({ ...values, [spec.searchKey ?? "q"]: search }),
@@ -452,8 +525,19 @@ export function ObjectExplorer({ spec, apiKey }: { spec: ObjectSpec; apiKey: str
           },
         );
         const rec = data.publicMenus.records;
-        setRows(rec.data ?? []);
-        setTotal(rec.total ?? rec.data?.length ?? 0);
+        const media = data.publicMenus.media.data ?? [];
+        const rowsWithArt = (rec.data ?? []).map((row, i) => {
+          const art = media[i] ?? {};
+          return {
+            ...row,
+            product_image_url: row.product_image_url ?? art.product_image_url,
+            brand_image_url: row.brand_image_url ?? art.brand_image_url,
+            listing_avatar_url: row.listing_avatar_url ?? art.listing_avatar_url,
+            image: row.image ?? art.product_image_url ?? art.brand_image_url ?? art.listing_avatar_url,
+          };
+        });
+        setRows(rowsWithArt);
+        setTotal(rec.total ?? rowsWithArt.length);
         setSnapshot(rec.snapshotDate ?? null);
         return;
       }
@@ -461,7 +545,7 @@ export function ObjectExplorer({ spec, apiKey }: { spec: ObjectSpec; apiKey: str
       if (spec.kind === "query" && spec.groupBy && spec.metrics) {
         const data = await gql<{ publicMenus: { query: CubePage } }>(
           apiKey,
-          `query($g:[MenuDim!],$m:[MenuMetric!],$f:JSON,$ob:String,$od:SortDir,$limit:Int){
+          `query($g:[MenuDim!],$m:[MenuMetric!],$f:MenuFilters,$ob:String,$od:SortDir,$limit:Int){
             publicMenus{query(groupBy:$g,metrics:$m,filters:$f,orderBy:$ob,orderDir:$od,limit:$limit){snapshotDate count data}}
           }`,
           {
@@ -474,55 +558,49 @@ export function ObjectExplorer({ spec, apiKey }: { spec: ObjectSpec; apiKey: str
           },
         );
         setRows(data.publicMenus.query.data ?? []);
-        setTotal(data.publicMenus.query.count ?? data.publicMenus.query.data?.length ?? 0);
+        setTotal((data.publicMenus.query as { count?: number }).count ?? data.publicMenus.query.data?.length ?? 0);
         setSnapshot(data.publicMenus.query.snapshotDate ?? null);
         return;
       }
 
       if (spec.kind === "listings") {
-        const data = await gql<{ listings: { list: CubePage } }>(
-          apiKey,
-          `query($state:String,$types:String,$has_menu:String,$q:String,$page:Int,$limit:Int,$sort:String,$dir:SortDir){
-            listings{list(state:$state,types:$types,has_menu:$has_menu,q:$q,page:$page,limit:$limit,sort:$sort,dir:$dir){snapshotDate total data}}
-          }`,
-          {
-            state: asList(values.state).join(",") || undefined,
-            types: asList(values.types).join(",") || undefined,
-            has_menu: asText(values.has_menu) || undefined,
-            q: search || undefined,
-            page,
-            limit,
-            sort: sort || undefined,
-            dir: dir.toUpperCase(),
-          },
-        );
-        const pageData = data.listings.list;
-        setRows(pageData.data ?? []);
-        setTotal(pageData.total ?? pageData.data?.length ?? 0);
-        setSnapshot(pageData.snapshotDate ?? null);
+        const params = new URLSearchParams();
+        params.set("limit", String(limit));
+        params.set("offset", String((page - 1) * limit));
+        const state = asList(values.state).join(",");
+        const types = asList(values.types).join(",");
+        const hasMenu = asText(values.has_menu);
+        if (state) params.set("state", state);
+        if (types) params.set("types", types);
+        if (hasMenu) params.set("has_menu", hasMenu);
+        if (search) params.set("q", search);
+        if (sort) params.set("sort", sort);
+        params.set("dir", dir);
+        const json = await cubeData(apiKey, `/listings/data?${params}`);
+        const list = (Array.isArray(json.rows) ? json.rows : []) as Array<Record<string, unknown>>;
+        setRows(list.map((row) => ({ ...row, listing_type: row.listing_type ?? row.type })));
+        setTotal(Number(json.total ?? list.length));
+        setSnapshot(typeof json.snapshot_date === "string" ? json.snapshot_date : null);
         return;
       }
 
       if (spec.kind === "licenses") {
-        const data = await gql<{ licenses: { list: CubePage } }>(
-          apiKey,
-          `query($state:String,$type:String,$status:String,$q:String,$page:Int,$limit:Int,$sort:String,$dir:SortDir){
-            licenses{list(state:$state,type:$type,status:$status,q:$q,page:$page,limit:$limit,sort:$sort,dir:$dir){total data}}
-          }`,
-          {
-            state: asList(values.state).join(",") || undefined,
-            type: asList(values.type).join(",") || undefined,
-            status: asList(values.status).join(",") || undefined,
-            q: search || undefined,
-            page,
-            limit,
-            sort: sort || undefined,
-            dir: dir.toUpperCase(),
-          },
-        );
-        const pageData = data.licenses.list;
-        setRows(pageData.data ?? []);
-        setTotal(pageData.total ?? pageData.data?.length ?? 0);
+        const params = new URLSearchParams();
+        params.set("page", String(page));
+        params.set("limit", String(limit));
+        const state = asList(values.state).join(",");
+        const type = asList(values.type).join(",");
+        const status = asList(values.status).join(",");
+        if (state) params.set("state", state);
+        if (type) params.set("type", type);
+        if (status) params.set("status", status);
+        if (search) params.set("q", search);
+        if (sort) params.set("sort", sort);
+        params.set("dir", dir);
+        const json = await cubeData(apiKey, `/geo/licenses?${params}`);
+        const list = (Array.isArray(json.data) ? json.data : []) as Array<Record<string, unknown>>;
+        setRows(list);
+        setTotal(Number(json.total ?? list.length));
         setSnapshot(null);
         return;
       }
@@ -595,7 +673,7 @@ export function ObjectExplorer({ spec, apiKey }: { spec: ObjectSpec; apiKey: str
             },
           );
           setRows(data.cube.query.data ?? []);
-          setTotal(data.cube.query.count ?? data.cube.query.data?.length ?? 0);
+          setTotal((data.cube.query as { count?: number }).count ?? data.cube.query.data?.length ?? 0);
           return;
         }
         const data = await gql<{ cube: { lines: CubePage } }>(
@@ -641,6 +719,73 @@ export function ObjectExplorer({ spec, apiKey }: { spec: ObjectSpec; apiKey: str
   useEffect(() => {
     void loadRows();
   }, [loadRows]);
+
+  useEffect(() => {
+    if (view !== "map") return;
+    let cancelled = false;
+    const loadPoints = async () => {
+      setMapLoading(true);
+      setMapError("");
+      try {
+        const fromRows = rowMapPoints(rows);
+        if (spec.kind === "geo") {
+          const resolved = (geoPayload?.resolved as Record<string, unknown> | undefined) ?? {};
+          const lat = Number(resolved.lat);
+          const lng = Number(resolved.lng);
+          if (!Number.isFinite(lat) || !Number.isFinite(lng) || !lat || !lng) {
+            if (!cancelled) setMapPoints([]);
+            return;
+          }
+          const origin: MapPoint = {
+            id: "origin",
+            name: `ZIP ${String(resolved.zip ?? asText(values.zip) ?? "")}`.trim(),
+            lat,
+            lng,
+          };
+          const radiusKm = Math.max(1, (Number(asText(values.radius_mi) || 10) || 10) * 1.60934);
+          const json = await cubeData(apiKey, `/near?lat=${lat}&lng=${lng}&radius_km=${radiusKm}&limit=200`);
+          if (!cancelled) setMapPoints([origin, ...parseMapPoints(json.data ?? json.points)]);
+          return;
+        }
+        if (spec.kind === "listings") {
+          const params = new URLSearchParams();
+          params.set("geo", "1");
+          params.set("limit", "4000");
+          const state = asList(values.state).join(",");
+          const types = asList(values.types).join(",");
+          const hasMenu = asText(values.has_menu);
+          if (state) params.set("state", state);
+          if (types) params.set("types", types);
+          if (hasMenu) params.set("has_menu", hasMenu);
+          if (search) params.set("q", search);
+          const json = await cubeData(apiKey, `/listings/data?${params}`);
+          const pts = parseMapPoints(json.points);
+          if (!cancelled) setMapPoints(pts.length ? pts : fromRows);
+          return;
+        }
+        if (spec.kind === "explore" || spec.kind === "records" || spec.kind === "query") {
+          const params = filtersToSearchParams(menuFilters({ ...values, [spec.searchKey ?? "q"]: search }));
+          if (spec.exploreDim) params.set("dim", spec.exploreDim);
+          const json = await cubeData(apiKey, `/explore/points?${params}`);
+          const pts = parseMapPoints(json.points);
+          if (!cancelled) setMapPoints(pts.length ? pts : fromRows);
+          return;
+        }
+        if (!cancelled) setMapPoints(fromRows);
+      } catch (err) {
+        if (!cancelled) {
+          setMapError(err instanceof Error ? err.message : "Map failed.");
+          setMapPoints(rowMapPoints(rows));
+        }
+      } finally {
+        if (!cancelled) setMapLoading(false);
+      }
+    };
+    void loadPoints();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiKey, view, spec, values, search, rows, geoPayload]);
 
   const onSearchChange = (value: string) => {
     setSearchDraft(value);
@@ -810,7 +955,7 @@ export function ObjectExplorer({ spec, apiKey }: { spec: ObjectSpec; apiKey: str
                 key={chip.key}
                 type="button"
                 onClick={() => {
-                  if ("clear" in chip && chip.clear) chip.clear();
+                  if ("clear" in chip && typeof chip.clear === "function") chip.clear();
                   else setFilter(chip.key, []);
                 }}
                 className="inline-flex items-center gap-1 rounded-full border bg-background px-2.5 py-0.5 text-xs text-foreground"
@@ -829,7 +974,11 @@ export function ObjectExplorer({ spec, apiKey }: { spec: ObjectSpec; apiKey: str
         )}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div className="flex items-center border-b px-6">
+        <ObjectViewSwitch view={view} onChange={changeView} />
+      </div>
+
+      <div className={cn("min-h-0 flex-1", view === "map" ? "overflow-hidden" : "overflow-auto")}>
         {needsSub ? (
           <div className="px-6 py-16 text-center text-sm text-muted-foreground">
             Enter a subscription ID. This object is active only with a CRM, ACC, or ERP connection.
@@ -843,15 +992,40 @@ export function ObjectExplorer({ spec, apiKey }: { spec: ObjectSpec; apiKey: str
             <div className="px-6 py-16 text-center text-sm text-muted-foreground">
               Enter a 5-digit ZIP to load Census, nearby stores, and market layers.
             </div>
+          ) : view === "map" ? (
+            mapLoading && !mapPoints.length ? (
+              <div className="px-6 py-16 text-center text-sm text-muted-foreground">Loading map…</div>
+            ) : (
+              <ObjectMap
+                points={mapPoints}
+                empty={mapError || "Enter a 5-digit ZIP to plot nearby stores."}
+              />
+            )
           ) : (
             <div className={cn(loading && geoPayload && "opacity-60")}>
               {loading && !geoPayload ? (
                 <div className="px-6 py-16 text-center text-sm text-muted-foreground">Loading…</div>
+              ) : view === "table" ? (
+                <GeoListView payload={geoPayload} />
               ) : (
                 <GeoEnrichView payload={geoPayload} />
               )}
             </div>
           )
+        ) : view === "map" ? (
+          <>
+            {mapError ? <div className="border-b px-6 py-2 text-xs text-destructive">{mapError}</div> : null}
+            {mapLoading && !mapPoints.length ? (
+              <div className="px-6 py-16 text-center text-sm text-muted-foreground">Loading map…</div>
+            ) : (
+              <ObjectMap points={mapPoints} />
+            )}
+          </>
+        ) : view === "cards" ? (
+          <>
+            {error ? <div className="border-b px-6 py-2 text-xs text-destructive">{error}</div> : null}
+            <ObjectCards spec={spec} columns={columns} rows={rows} loading={loading} />
+          </>
         ) : (
           <>
             {error ? <div className="border-b px-6 py-2 text-xs text-destructive">{error}</div> : null}
@@ -904,18 +1078,28 @@ export function ObjectExplorer({ spec, apiKey }: { spec: ObjectSpec; apiKey: str
                     ))
                   : rows.map((row, i) => (
                       <tr key={String(row.id ?? `${row.state_code ?? ""}-${row.license_number ?? i}`)} className="hover:bg-accent/40">
-                        {columns.map((col) => (
+                        {columns.map((col) => {
+                          const identity = col.key === nameColumnKey(spec, columns);
+                          return (
                           <td
                             key={col.key}
                             className={cn(
                               "border-b border-border/70 px-4 py-2.5 align-middle",
                               col.kind !== "text" && "text-right tabular-nums",
-                              col.key === "name" && "font-medium",
+                              (col.key === "name" || identity) && "font-medium",
                             )}
                           >
-                            {formatCell(col.kind, row[col.key])}
+                            {identity ? (
+                              <div className="flex items-center gap-3">
+                                <ObjectThumb row={row} spec={spec} />
+                                <span>{formatCell(col.kind, row[col.key])}</span>
+                              </div>
+                            ) : (
+                              formatCell(col.kind, row[col.key])
+                            )}
                           </td>
-                        ))}
+                          );
+                        })}
                       </tr>
                     ))
               )}
@@ -925,7 +1109,7 @@ export function ObjectExplorer({ spec, apiKey }: { spec: ObjectSpec; apiKey: str
         )}
       </div>
 
-      <div className="flex items-center justify-between gap-3 border-t px-6 py-2.5 text-xs text-muted-foreground">
+      <div className={cn("flex items-center justify-between gap-3 border-t px-6 py-2.5 text-xs text-muted-foreground", view === "map" && "hidden")}>
         <span className="tabular-nums">
           Page {page} of {pages.toLocaleString("en-US")}
         </span>

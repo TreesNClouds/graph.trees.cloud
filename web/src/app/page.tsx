@@ -1,10 +1,10 @@
 import { AppShell } from "@/components/app-shell";
-import { CubeFrame } from "@/components/cube-frame";
+import { CatalogHome } from "@/components/catalog-home";
 
 export default function HomePage() {
   return (
     <AppShell>
-      <CubeFrame src="/api/v2/cube" title="Trees N Clouds catalog" />
+      <CatalogHome />
     </AppShell>
   );
 }

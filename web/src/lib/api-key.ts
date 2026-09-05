@@ -44,19 +44,30 @@ type ProbeResult =
   | { ok: false; message: string };
 
 export async function probeKey(key: string): Promise<ProbeResult> {
-  const res = await fetch("/api/v2/graphql", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${key}`,
-    },
-    body: JSON.stringify({ query: "query { publicMenus { __typename } }" }),
-  });
+  let res: Response;
+  try {
+    res = await fetch("/api/v2/graphql", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${key}`,
+      },
+      body: JSON.stringify({ query: "query { publicMenus { __typename } }" }),
+    });
+  } catch {
+    return { ok: false, message: "Could not reach GraphQL. Is the API running?" };
+  }
+  const raw = await res.text();
   let body: { errors?: Array<{ message?: string; extensions?: { code?: string } }> } = {};
   try {
-    body = (await res.json()) as typeof body;
+    body = raw ? (JSON.parse(raw) as typeof body) : {};
   } catch {
-    return { ok: false, message: "GraphQL upstream did not return JSON." };
+    return {
+      ok: false,
+      message: res.ok
+        ? "GraphQL did not return JSON."
+        : `GraphQL is unreachable (${res.status}). Start the API and try again.`,
+    };
   }
   const err = body.errors?.[0];
   const code = err?.extensions?.code;

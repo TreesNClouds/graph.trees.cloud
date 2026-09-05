@@ -1,3 +1,5 @@
+import { toastError } from "@/lib/toast";
+
 export class GqlError extends Error {
   constructor(message: string) {
     super(message);
@@ -5,28 +7,43 @@ export class GqlError extends Error {
   }
 }
 
+function fail(message: string): never {
+  toastError(message);
+  throw new GqlError(message);
+}
+
 export async function gql<T>(
   key: string,
   query: string,
   variables?: Record<string, unknown>,
 ): Promise<T> {
-  const res = await fetch("/api/v2/graphql", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${key}`,
-    },
-    body: JSON.stringify({ query, variables }),
-  });
+  let res: Response;
+  try {
+    res = await fetch("/api/v2/graphql", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${key}`,
+      },
+      body: JSON.stringify({ query, variables }),
+    });
+  } catch {
+    fail("Could not reach GraphQL. Is the API running?");
+  }
+  const raw = await res.text();
   let body: { data?: T; errors?: Array<{ message?: string }> } = {};
   try {
-    body = (await res.json()) as typeof body;
+    body = raw ? (JSON.parse(raw) as typeof body) : {};
   } catch {
-    throw new GqlError("GraphQL did not return JSON.");
+    fail(
+      res.ok
+        ? "GraphQL did not return JSON."
+        : `GraphQL is unreachable (${res.status}). Start the API and try again.`,
+    );
   }
-  if (body.errors?.[0]?.message) throw new GqlError(body.errors[0].message);
-  if (!res.ok) throw new GqlError(`GraphQL returned ${res.status}.`);
-  if (!body.data) throw new GqlError("GraphQL returned no data.");
+  if (body.errors?.[0]?.message) fail(body.errors[0].message);
+  if (!res.ok) fail(`GraphQL returned ${res.status}.`);
+  if (!body.data) fail("GraphQL returned no data.");
   return body.data;
 }
 

@@ -19,28 +19,34 @@ export function BrandLogo({
   src,
   name,
   id,
+  size = "sm",
+  fit = "contain",
 }: {
   src?: string | null;
   name: string;
   id: string;
+  size?: "sm" | "md";
+  fit?: "contain" | "cover";
 }) {
   const [broken, setBroken] = useState(false);
   const initial = (name || "?").slice(0, 1).toUpperCase();
   const showImg = Boolean(src && /^https?:\/\//.test(src) && !broken);
+  const box = size === "md" ? "size-14" : "size-10";
+  const type = size === "md" ? "text-base" : "text-sm";
 
   return (
-    <div className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-md border bg-white">
+    <div className={cn("flex shrink-0 items-center justify-center overflow-hidden rounded-md border bg-white", box)}>
       {showImg ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={src!}
           alt=""
-          className="size-10 object-contain p-0.5"
+          className={cn(box, fit === "cover" ? "object-cover" : "object-contain p-0.5")}
           onError={() => setBroken(true)}
         />
       ) : (
         <span
-          className="flex size-10 items-center justify-center text-sm font-semibold text-white"
+          className={cn("flex items-center justify-center font-semibold text-white", box, type)}
           style={{ background: placeholderColor(id || name) }}
         >
           {initial}

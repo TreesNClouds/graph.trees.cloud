@@ -9,21 +9,20 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { key, ready, connect, disconnect } = useApiKey();
 
   if (!ready) {
-    return (
-      <div className="flex min-h-svh flex-col">
-        <ExplorerHeader />
-      </div>
-    );
+    return <div className="min-h-svh bg-background" />;
   }
 
   if (!key) {
     return (
       <div className="relative flex min-h-svh flex-col">
         <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
-          <img src="/bg.png" alt="" className="size-full object-cover object-center opacity-20" />
+          <img
+            src="/bg.png"
+            alt=""
+            className="size-full object-cover object-center opacity-20 grayscale"
+          />
         </div>
         <div className="relative z-10 flex min-h-svh flex-col">
-          <ExplorerHeader overlay />
           <ConnectGate onConnected={connect} />
         </div>
       </div>
