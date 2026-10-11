@@ -136,6 +136,12 @@ enum MenuMetric {
   min_price
   "Maximum listing price."
   max_price
+  "Lines on sale: sale_amount (the discounted price) is above 0 and under the list price."
+  on_sale
+  "Average price paid: the sale price when a line is on sale, else the list price ($)."
+  avg_net_price
+  "Average percent off the list price across the lines on sale (25 = 25% off)."
+  avg_discount_pct
   "In-stock listing count."
   in_stock
   "Low-stock listing count (qty 1–5)."
@@ -211,6 +217,10 @@ type PublicMenusCube {
   """
   Flat, fully-normalized records (one row per line-item) grouped into column-group
   tabs. \`tab\` picks the tab (retailer/product/potency/pricing/inventory/…).
+  The \`pricing\` tab carries \`price\` (list price of the package), \`sale_amount\`
+  (the discounted price, 0 when there is no sale), \`net_price\` (price paid: the sale
+  price when on sale, else the list price) and \`discount_pct\` (percent off, 25 = 25%
+  off; null when not on sale).
   """
   records(dim: MenuObject, tab: String, filters: JSON, sort: String, dir: SortDir, page: Int, limit: Int): CubePage!
   "Stores within radiusKm of a lat/lng point (H3-accelerated)."
