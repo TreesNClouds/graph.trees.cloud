@@ -26,6 +26,14 @@ export const publicMenus: CubeModule = {
     },
     PublicMenusCube: {
       meta: () => menuGet('/meta', {}),
+      publish: async () => {
+        const j = await menuGet('/publish', {});
+        return {
+          snapshotDate: j.snapshot_date, publishedAt: j.published_at ?? null, publishSeq: j.publish_seq ?? null,
+          buildStartsUtc: j.build_starts_utc, typicalPublishLagMinutes: j.typical_publish_lag_minutes ?? null,
+          nextSnapshotDate: j.next_snapshot_date, nextExpectedAt: j.next_expected_at ?? null, overdue: Boolean(j.overdue),
+        };
+      },
       facets: (_p: unknown, a: { field?: string; q?: string }) => menuGet('/facets', { field: a.field, q: a.q }),
       query: async (_p: unknown, a: Record<string, unknown>) => {
         const f = (a.filters as Record<string, unknown>) ?? {};
@@ -72,10 +80,18 @@ enum MenuDim {
   subcategory
   "Genetics: indica | sativa | hybrid."
   genetics
-  "Weight unit label on the listing."
+  "Unit of \`weight_value\` on the listing: g | mg | oz | lb | ml | fl_oz | each, blank when the source gave none."
   weight_unit
-  "THC unit label on the listing."
+  "Unit of \`thc_value\`: pct (percent of the product) | mg (milligrams per package) | blank when it cannot be told."
   thc_unit
+  "Unit of \`cbd_value\`, same values as thc_unit."
+  cbd_unit
+  "What \`weight_value\` measures: single | per_piece | pack_total | unknown (see MenuRecordColumn.weight_basis)."
+  weight_basis
+  "What \`price\` buys: package | per_gram (see MenuRecordColumn.price_unit)."
+  price_unit
+  "How the shop states prices: tax_included | pre_tax | unknown (see MenuRecordColumn.tax_basis)."
+  tax_basis
   "Canonical brand id (preferred for joins / deep links)."
   brand_id
   "Brand display name."
@@ -154,7 +170,7 @@ enum MenuMetric {
   win_back
   "Inventory unit estimate."
   inventory
-  "Average THC potency."
+  "Average THC percent over the lines whose thc_unit is pct (mg-dosed lines are left out)."
   avg_thc
 }
 
@@ -176,11 +192,17 @@ input MenuFilters {
   item: String
   "Only in-stock line-items."
   in_stock: Boolean
+  "Minimum thc_value. thc_value is in its own unit (thc_unit), so pair with category to stay within one unit."
   thc_min: Float
+  "Maximum thc_value (see thc_min)."
   thc_max: Float
+  "Minimum list price (USD)."
   price_min: Float
+  "Maximum list price (USD)."
   price_max: Float
+  "Minimum weight_value, in the listing's own weight_unit."
   weight_min: Float
+  "Maximum weight_value (see weight_min)."
   weight_max: Float
   "Radius search: latitude (requires lng + radiusKm)."
   lat: Float
@@ -195,6 +217,102 @@ input MenuFilters {
 }
 
 """
+The columns of a Public Menus record row (\`records\` and the \`items\` of
+\`data(path: "/store/<id>")\`), with what each one means and its unit. Rows are
+JSON keyed by these names; this enum is their documentation.
+"""
+enum MenuRecordColumn {
+  "List price of the package in USD, as the menu shows it before any sale. See price_unit and tax_basis for what it covers."
+  price
+  "Discounted price of the package in USD, 0 when the line is not on sale. Set only when it is below price and at least 10% of it."
+  sale_amount
+  "Price paid in USD: sale_amount when the line is on sale, else price."
+  net_price
+  "Percent off the list price (25 = 25% off), null when not on sale."
+  discount_pct
+  """
+  What price buys. package: the package the size fields describe. per_gram: a deli or
+  bulk listing weighed out to order and sized at 1 g, so price is a per-gram rate rather
+  than a 1 g package. Read from the source's own deli/bulk labels and the item name.
+  """
+  price_unit
+  """
+  How the shop states its prices, from the shop's own statement in its menu name.
+  tax_included ("TAXES INCLUDED", "out the door pricing"), pre_tax ("TAXES NOT INCLUDED",
+  "prices pre-tax") or unknown (no statement; also excise-only statements). No source
+  we read carries a per-menu tax setting, so most shops are unknown.
+  """
+  tax_basis
+  "The listing's own size number, as the source gave it. Its unit is weight_unit; whether it is one piece or the whole pack is weight_basis."
+  weight_value
+  "Unit of weight_value: g | mg | oz | lb | ml | fl_oz | each, blank when the source gave none. mg on an edible is usually the THC dose, not a mass."
+  weight_unit
+  """
+  What weight_value measures, found by reconciling it with the unit standard
+  (unit_weight_g × unit_count = package_weight_g). single: a one-piece package, so it
+  is both. per_piece: a multipack and the weight is one piece ("0.7g each | 3pk" → 0.7).
+  pack_total: a multipack and the weight is the whole pack. unknown: no mass, or the
+  weight matches neither.
+  """
+  weight_basis
+  "Pieces in the package, 1 for a single item. Read from the source's pack field or the item name (5pk, 10x0.5g)."
+  unit_count
+  "Mass of one piece in grams. Null when weight_basis is unknown, so a size that does not reconcile is never published."
+  unit_weight_g
+  "Mass of the whole package in grams (unit_weight_g × unit_count). Null when weight_basis is unknown."
+  package_weight_g
+  "Pieces as the source's own pack field or an Npk in the name gives it; 0 when it gives none or 1. Prefer unit_count."
+  pack_count
+  "THC figure as the source gave it. Its unit is thc_unit."
+  thc_value
+  """
+  Unit of thc_value. pct: percent of the product's weight (flower, vapes, concentrates).
+  mg: milligrams for the package (edibles, drinks, tinctures and other dosed products), set
+  when the figure is over 100 or equals the dose stated on the item. Blank when the
+  source gave no figure, or a dosed product's figure cannot be told apart.
+  """
+  thc_unit
+  "CBD figure as the source gave it. Its unit is cbd_unit."
+  cbd_value
+  "Unit of cbd_value, same rule as thc_unit."
+  cbd_unit
+  """
+  Canonical category (Flower, Vape Pens, Edibles, Pre Roll, …). Resolved from the
+  source's own category label through the canonical category vocabulary; a cross-platform
+  name consensus outranks the label only when at least two platforms agree on that category.
+  """
+  category
+  "Canonical subcategory within category."
+  subcategory
+}
+
+"""
+When the Public Menus snapshot was published and when the next one is due. The cube is
+rebuilt once a day: snapshot D is built by the nightly that starts at build_starts_utc on
+day D from the menus scraped on day D-1. A failed build publishes nothing, and the
+previous snapshot keeps being served; a repaired build publishes the same day again with
+a higher publishSeq.
+"""
+type MenuPublish {
+  "Snapshot (YYYY-MM-DD) every Public Menus field is serving now."
+  snapshotDate: String!
+  "When that snapshot was last published (ISO 8601, UTC). Null if it predates the publish log."
+  publishedAt: String
+  "1 for the day's first publish; higher when the same day was rebuilt and republished. Re-read when it changes."
+  publishSeq: Int
+  "When the nightly build starts each day (HH:MM, UTC)."
+  buildStartsUtc: String!
+  "How long builds take to publish: the 90th percentile of the last 14 days' first publishes, in minutes after build start."
+  typicalPublishLagMinutes: Int
+  "The snapshot that comes next (snapshotDate + 1 day)."
+  nextSnapshotDate: String!
+  "When nextSnapshotDate is due: its build start plus typicalPublishLagMinutes (ISO 8601, UTC)."
+  nextExpectedAt: String
+  "True once nextExpectedAt has passed without that snapshot: the build is late or failed, not just unchanged."
+  overdue: Boolean!
+}
+
+"""
 Public Menus — nationwide dispensary menu analytics (Trees N Clouds public data).
 Retailers, brands, products, categories, and geo. Grain: one product-listing
 line per store per day on the latest published snapshot.
@@ -202,6 +320,11 @@ line per store per day on the latest published snapshot.
 type PublicMenusCube {
   "Snapshot-wide headline totals: stores, brands, SKUs, states, listings, …."
   meta: JSON!
+  """
+  Snapshot publish signal: which snapshot is served, when it was published, and when
+  the next one is due. Cheap; poll it instead of re-reading data to detect a new day.
+  """
+  publish: MenuPublish!
   """
   Distinct filter values with counts. \`field\`=brand returns canonical-brand
   type-ahead options; omit \`field\` to get states/categories/subcategories/genetics.
@@ -219,8 +342,9 @@ type PublicMenusCube {
   tabs. \`tab\` picks the tab (retailer/product/potency/pricing/inventory/…).
   The \`pricing\` tab carries \`price\` (list price of the package), \`sale_amount\`
   (the discounted price, 0 when there is no sale), \`net_price\` (price paid: the sale
-  price when on sale, else the list price) and \`discount_pct\` (percent off, 25 = 25%
-  off; null when not on sale).
+  price when on sale, else the list price), \`discount_pct\` (percent off, 25 = 25%
+  off; null when not on sale), \`price_unit\` and \`tax_basis\`. The \`potency\` tab
+  carries the size and potency fields. Every column is documented on MenuRecordColumn.
   """
   records(dim: MenuObject, tab: String, filters: JSON, sort: String, dir: SortDir, page: Int, limit: Int): CubePage!
   "Stores within radiusKm of a lat/lng point (H3-accelerated)."
