@@ -30,8 +30,10 @@ export const publicMenus: CubeModule = {
         const j = await menuGet('/publish', {});
         return {
           snapshotDate: j.snapshot_date, publishedAt: j.published_at ?? null, publishSeq: j.publish_seq ?? null,
-          buildStartsUtc: j.build_starts_utc, typicalPublishLagMinutes: j.typical_publish_lag_minutes ?? null,
-          nextSnapshotDate: j.next_snapshot_date, nextExpectedAt: j.next_expected_at ?? null, overdue: Boolean(j.overdue),
+          buildStartsLocal: j.build_starts_local, buildTimeZone: j.build_tz,
+          nextSnapshotDate: j.next_snapshot_date, nextBuildStartsAt: j.next_build_starts_at,
+          typicalPublishLagMinutes: j.typical_publish_lag_minutes ?? null,
+          nextExpectedAt: j.next_expected_at ?? null, overdue: j.overdue ?? null,
         };
       },
       facets: (_p: unknown, a: { field?: string; q?: string }) => menuGet('/facets', { field: a.field, q: a.q }),
@@ -172,7 +174,12 @@ enum MenuMetric {
   inventory
   "Average thc_value over every line, whatever its thc_unit (mg and percent mixed). Prefer avg_thc_pct."
   avg_thc
-  "Average THC percent over the lines whose thc_unit is pct (mg-dosed lines are left out)."
+  """
+  Average thc_value over the lines whose thc_unit is pct and whose figure is 0–100. Snapshots
+  built before the dose rule label every figure pct, so until then dosed products whose mg
+  figure is 100 or less (a 10 mg gummy) are still counted; pair with category to stay within
+  flower, vapes and concentrates.
+  """
   avg_thc_pct
 }
 
@@ -235,14 +242,17 @@ enum MenuRecordColumn {
   """
   What price buys. package: the package the size fields describe. per_gram: a deli or
   bulk listing weighed out to order and sized at 1 g, so price is a per-gram rate rather
-  than a 1 g package. Read from the source's own deli/bulk labels and the item name.
+  than a 1 g package. unknown: the listing has no resolved size, so it cannot be told.
+  Read from the source's own deli/bulk labels, the item name and the unit standard.
   """
   price_unit
   """
-  How the shop states its prices, from the shop's own statement in its menu name.
-  tax_included ("TAXES INCLUDED", "out the door pricing"), pre_tax ("TAXES NOT INCLUDED",
-  "prices pre-tax") or unknown (no statement; also excise-only statements). No source
-  we read carries a per-menu tax setting, so most shops are unknown.
+  How the shop states its prices, from the shop's own statement in its menu name; the same
+  value on every line of the shop, and on the store header of \`data(path: "/store/<id>")\`.
+  tax_included: "tax(es) included", "tax inclusive", "out the door", "OTD". pre_tax: "tax(es)
+  not included", "pre-tax", "plus tax", "+ tax". unknown: no statement, or an excise-only
+  one ("excise tax included": sales tax is still added). No source we read carries a
+  per-menu tax setting, so most shops are unknown.
   """
   tax_basis
   "The listing's own size number, as the source gave it. Its unit is weight_unit; whether it is one piece or the whole pack is weight_basis."
@@ -257,7 +267,7 @@ enum MenuRecordColumn {
   weight matches neither (the honest default: nothing is guessed).
   """
   weight_basis
-  "Pieces in the package, 1 for a single item. Derived from the source's pack field or the item name/size (5pk, 10x0.5g); 1 when nothing states a pack."
+  "Pieces in the package, 1 for a single item. Derived from the source's pack field or the item name/size (5pk, 10x0.5g); may be absent: null when weight_basis is unknown."
   unit_count
   "Mass of one piece in grams, derived from the item name/size; may be absent. Null when weight_basis is unknown, so a size that does not reconcile is never published."
   unit_weight_g
@@ -291,28 +301,33 @@ enum MenuRecordColumn {
 
 """
 When the Public Menus snapshot was published and when the next one is due. The cube is
-rebuilt once a day: snapshot D is built by the nightly that starts at build_starts_utc on
-day D from the menus scraped on day D-1. A failed build publishes nothing, and the
-previous snapshot keeps being served; a repaired build publishes the same day again with
-a higher publishSeq.
+rebuilt once a day: snapshot D is built by the nightly that starts at buildStartsLocal
+(buildTimeZone, so the UTC time moves with daylight saving) on day D from the menus scraped
+on day D-1. Only a build that passes its checks is published; a failed build publishes
+nothing and the previous snapshot keeps being served. A repaired build publishes the same
+day again with a higher publishSeq.
 """
 type MenuPublish {
-  "Snapshot (YYYY-MM-DD) every Public Menus field is serving now."
+  "The latest published snapshot (YYYY-MM-DD), from the publish log."
   snapshotDate: String!
   "When that snapshot was last published (ISO 8601, UTC). Null if it predates the publish log."
   publishedAt: String
   "1 for the day's first publish; higher when the same day was rebuilt and republished. Re-read when it changes."
   publishSeq: Int
-  "When the nightly build starts each day (HH:MM, UTC)."
-  buildStartsUtc: String!
-  "How long builds take to publish: the 90th percentile of the last 14 days' first publishes, in minutes after build start."
-  typicalPublishLagMinutes: Int
+  "When the nightly build starts each day, in buildTimeZone (HH:MM)."
+  buildStartsLocal: String!
+  "IANA time zone of buildStartsLocal (America/Los_Angeles)."
+  buildTimeZone: String!
   "The snapshot that comes next (snapshotDate + 1 day)."
   nextSnapshotDate: String!
-  "When nextSnapshotDate is due: its build start plus typicalPublishLagMinutes (ISO 8601, UTC)."
+  "When the build for nextSnapshotDate starts (ISO 8601, UTC)."
+  nextBuildStartsAt: String!
+  "How long builds take to publish: the 90th percentile of the last 28 days' first publishes, in minutes after that day's build start."
+  typicalPublishLagMinutes: Int
+  "When nextSnapshotDate is due: nextBuildStartsAt plus typicalPublishLagMinutes (ISO 8601, UTC)."
   nextExpectedAt: String
-  "True once nextExpectedAt has passed without that snapshot: the build is late or failed, not just unchanged."
-  overdue: Boolean!
+  "True once nextExpectedAt has passed without that snapshot (late or failed, not just unchanged); false before; null when there is no publish history to measure from."
+  overdue: Boolean
 }
 
 """
