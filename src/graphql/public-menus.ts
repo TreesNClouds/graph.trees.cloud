@@ -90,7 +90,7 @@ enum MenuDim {
   cbd_unit
   "What \`weight_value\` measures: single | per_piece | pack_total | unknown (see MenuRecordColumn.weight_basis)."
   weight_basis
-  "What \`price\` buys: package | per_gram (see MenuRecordColumn.price_unit)."
+  "What \`price\` buys: package | per_gram | unknown (see MenuRecordColumn.price_unit)."
   price_unit
   "How the shop states prices: tax_included | pre_tax | unknown (see MenuRecordColumn.tax_basis)."
   tax_basis
