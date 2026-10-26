@@ -170,8 +170,10 @@ enum MenuMetric {
   win_back
   "Inventory unit estimate."
   inventory
-  "Average THC percent over the lines whose thc_unit is pct (mg-dosed lines are left out)."
+  "Average thc_value over every line, whatever its thc_unit (mg and percent mixed). Prefer avg_thc_pct."
   avg_thc
+  "Average THC percent over the lines whose thc_unit is pct (mg-dosed lines are left out)."
+  avg_thc_pct
 }
 
 """Typed filters for the Public Menus cube (all optional; combine freely)."""
@@ -252,14 +254,14 @@ enum MenuRecordColumn {
   (unit_weight_g × unit_count = package_weight_g). single: a one-piece package, so it
   is both. per_piece: a multipack and the weight is one piece ("0.7g each | 3pk" → 0.7).
   pack_total: a multipack and the weight is the whole pack. unknown: no mass, or the
-  weight matches neither.
+  weight matches neither (the honest default: nothing is guessed).
   """
   weight_basis
-  "Pieces in the package, 1 for a single item. Read from the source's pack field or the item name (5pk, 10x0.5g)."
+  "Pieces in the package, 1 for a single item. Derived from the source's pack field or the item name/size (5pk, 10x0.5g); 1 when nothing states a pack."
   unit_count
-  "Mass of one piece in grams. Null when weight_basis is unknown, so a size that does not reconcile is never published."
+  "Mass of one piece in grams, derived from the item name/size; may be absent. Null when weight_basis is unknown, so a size that does not reconcile is never published."
   unit_weight_g
-  "Mass of the whole package in grams (unit_weight_g × unit_count). Null when weight_basis is unknown."
+  "Mass of the whole package in grams (unit_weight_g × unit_count), derived from the item name/size; may be absent. Null when weight_basis is unknown."
   package_weight_g
   "Pieces as the source's own pack field or an Npk in the name gives it; 0 when it gives none or 1. Prefer unit_count."
   pack_count
@@ -269,7 +271,8 @@ enum MenuRecordColumn {
   Unit of thc_value. pct: percent of the product's weight (flower, vapes, concentrates).
   mg: milligrams for the package (edibles, drinks, tinctures and other dosed products), set
   when the figure is over 100 or equals the dose stated on the item. Blank when the
-  source gave no figure, or a dosed product's figure cannot be told apart.
+  source gave no figure, or a dosed product's figure cannot be told apart. Snapshots built
+  before this rule is switched on label every figure pct.
   """
   thc_unit
   "CBD figure as the source gave it. Its unit is cbd_unit."
