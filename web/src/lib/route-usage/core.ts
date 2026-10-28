@@ -40,7 +40,13 @@ export type RouteUsageClientT = {
   record(route: string, statusCode?: number): void;
   /** Send what is buffered. Resolves even when the send fails (counts stay buffered). */
   flush(): Promise<void>;
-  /** Flush only if the last flush is older than the interval. For serverless runtimes. */
+  /**
+   * For serverless runtimes, where a timer may never fire: flush when the
+   * interval has passed, or at once when a route shows up that has not been
+   * sent yet today. That way a rare caller (the one a deprecation decision
+   * hinges on) is delivered even if the instance is recycled right after;
+   * only repeat hits on busy routes wait for the interval.
+   */
   flushIfDue(): Promise<void> | null;
   /** Rows not yet sent (tests, diagnostics). */
   pending(): UsageRowT[];
@@ -140,6 +146,11 @@ export function createRouteUsageClient(opts: RouteUsageOptionsT): RouteUsageClie
   let buffer = new Map<string, AggT>();
   let lastFlush = now().getTime();
   let inflight: Promise<void> | null = null;
+  // Keys already sent (or being sent) today, so a first sighting can be flushed at once.
+  let sentDay = '';
+  let sent = new Set<string>();
+  let urgent = false;
+  let warned = false;
 
   const add = (key: string, a: AggT) => {
     const cur = buffer.get(key);
@@ -158,7 +169,8 @@ export function createRouteUsageClient(opts: RouteUsageOptionsT): RouteUsageClie
       return { day: k.slice(0, tab), route: k.slice(tab + 1), count: a.count, status: { ...a.status }, last: a.last };
     });
 
-  async function send(rows: UsageRowT[]): Promise<void> {
+  /** Send in chunks; returns the rows that were NOT accepted, so a retry never double counts. */
+  async function send(rows: UsageRowT[]): Promise<UsageRowT[]> {
     for (let i = 0; i < rows.length; i += MAX_ROWS_PER_POST) {
       const body: IngestBodyT = { service, env, rows: rows.slice(i, i + MAX_ROWS_PER_POST) };
       const ctrl = typeof AbortController === 'undefined' ? null : new AbortController();
@@ -170,12 +182,19 @@ export function createRouteUsageClient(opts: RouteUsageOptionsT): RouteUsageClie
           body: JSON.stringify(body),
           ...(ctrl ? { signal: ctrl.signal } : {}),
         });
-        // 4xx other than 429 means the batch itself is bad; drop it rather than retry forever.
-        if (!res.ok && (res.status >= 500 || res.status === 429)) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok && (res.status >= 500 || res.status === 429)) return rows.slice(i);
+        // Any other 4xx means the batch or the token is bad; drop it rather than retry forever.
+        if (!res.ok && !warned) {
+          warned = true;
+          console.warn(`[route-usage] ${service}: ingest answered HTTP ${res.status}; counts dropped. Check ROUTE_USAGE_TOKEN.`);
+        }
+      } catch {
+        return rows.slice(i);
       } finally {
         if (t) clearTimeout(t);
       }
     }
+    return [];
   }
 
   const client: RouteUsageClientT = {
@@ -187,6 +206,11 @@ export function createRouteUsageClient(opts: RouteUsageOptionsT): RouteUsageClie
       const day = utcDay(at);
       let key = `${day}\t${route.slice(0, MAX_ROUTE_LEN)}`;
       if (!buffer.has(key) && buffer.size >= MAX_KEYS) key = `${day}\tOTHER`;
+      if (day !== sentDay) {
+        sentDay = day;
+        sent = new Set();
+      }
+      if (!buffer.has(key) && !sent.has(key)) urgent = true;
       const status = emptyStatus();
       if (statusCode !== undefined) status[statusClass(statusCode)] = 1;
       add(key, { count: 1, status, last: at.toISOString() });
@@ -197,10 +221,16 @@ export function createRouteUsageClient(opts: RouteUsageOptionsT): RouteUsageClie
       const batch = buffer;
       buffer = new Map();
       lastFlush = now().getTime();
+      urgent = false;
+      for (const k of batch.keys()) if (sent.size < MAX_KEYS) sent.add(k);
       inflight = send(toRows(batch))
-        .catch(() => {
-          // Keep the counts for the next flush, unless the buffer is already full.
-          for (const [k, a] of batch) if (buffer.has(k) || buffer.size < MAX_KEYS) add(k, a);
+        .then((unsent) => {
+          // Keep unsent counts for the next flush, unless the buffer is already full.
+          for (const r of unsent) {
+            const k = `${r.day}\t${r.route}`;
+            sent.delete(k);
+            if (buffer.has(k) || buffer.size < MAX_KEYS) add(k, { count: r.count, status: r.status, last: r.last });
+          }
         })
         .finally(() => {
           inflight = null;
@@ -208,7 +238,8 @@ export function createRouteUsageClient(opts: RouteUsageOptionsT): RouteUsageClie
       return inflight;
     },
     flushIfDue() {
-      if (!enabled || buffer.size === 0 || now().getTime() - lastFlush < flushMs) return null;
+      if (!enabled || buffer.size === 0) return null;
+      if (!urgent && now().getTime() - lastFlush < flushMs) return null;
       return client.flush();
     },
     pending() {
